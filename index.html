@@ -71,13 +71,19 @@
   .sheet input:hover { background: rgba(255, 214, 10, .16); }
   .sheet input:focus { background: rgba(29, 95, 209, .10); box-shadow: inset 0 0 0 1.5px var(--calc); }
   .sheet input.calc:focus { color: var(--ink); }
+  .pagehd { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; font: 600 12px Inter, sans-serif; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .pagehd .btn { text-transform: none; letter-spacing: 0; font-size: 12px; padding: 4px 10px; }
+  .pagewrap { margin-bottom: 14px; }
+  .addrow { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); }
   .foot { margin-top: 10px; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 
   @media print {
     @page { size: letter landscape; margin: 0.25in; }
     body { background: #fff; }
     .wrap { padding: 0; max-width: none; }
-    .bar, .panel, .foot, .steps { display: none !important; }
+    .bar, .panel, .foot, .steps, .pagehd, .addrow { display: none !important; }
+    .pagewrap { margin: 0; break-after: page; page-break-after: always; }
+    .pagewrap:last-child { break-after: auto; page-break-after: auto; }
     .scroller { border: 0; padding: 0; overflow: visible; border-radius: 0; }
     .sheet { min-width: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .sheet input { background: transparent !important; box-shadow: none !important; }
@@ -130,7 +136,8 @@
   </div>
 
   <div class="steps" id="steps"></div>
-  <div class="scroller"><div class="sheet" id="sheet"></div></div>
+  <div id="pages"></div>
+  <div class="addrow"><button class="btn" id="addPage">+ Add page</button><span id="pageNote"></span></div>
   <div class="foot">
     Fill in checkpoints, altitude, winds aloft (true), temp, TC, variation (e.g. <b>7W</b> or <b>+7</b>) and leg distances. Altitude, winds, temp, variation and deviation carry down to the next leg until you change them.
     TAS, GPH and % power come from the selected model's POH cruise table at your cruise RPM, pressure altitude (departure altimeter) and temperature. KOSU frequencies and field elevation fill in automatically when KOSU is the departure or destination (FAA data eff. Feb 2026 — verify against the current Chart Supplement). A leg that climbs above the previous altitude uses the POH time/fuel/distance-to-climb table from the departure Field Elev. Start/taxi fuel per POH is taken before leg 1.
@@ -305,25 +312,28 @@ var E = (function () {
 var CX0 = 68, CY0 = 56, CW = 668, CHT = 502;
 var JCP = [232.8, 266.3, 299.9, 333.6, 367.2, 400.8, 434.5, 468.1, 501.7, 535.3];
 var JLG = [249.5, 283.1, 316.7, 350.4, 384.0, 417.6, 451.3, 484.9, 518.5];
-var NL = 8; // legs per sheet
-var CELLS = [];
-function C(k, x0, y0, x1, y1, o) { o = o || {}; CELLS.push({ k: k, x0: x0, y0: y0, x1: x1, y1: y1, s: o.s || 8, l: !!o.l, ph: o.ph || '', num: !!o.num }); }
+var PER = 8, MAXP = 4; // legs per sheet, max sheets
+var NL = 8; // total legs (pages × 8)
+var CELLS = [], CUR_P = 0;
+function C(k, x0, y0, x1, y1, o) { o = o || {}; CELLS.push({ k: k, page: CUR_P, x0: x0, y0: y0, x1: x1, y1: y1, s: o.s || 8, l: !!o.l }); }
+function pk(k, p) { return p ? k + '_p' + p : k; } // per-page singleton keys (page totals)
 
-(function layout() {
+function layoutPage(p) {
+  CUR_P = p; var o = p * PER;
   C('tail', 163.5, 78, 196, 94.5, { s: 8.5, l: true });
   C('note0', 232, 78, 727, 94.5, { s: 8, l: true });
   [94.7, 112.1, 129.4, 146.6].forEach(function (y, i) { C('note' + (i + 1), 80, y + 0.4, 727, y + 17, { s: 7, l: true }); });
   C('timeoff', 500.5, 198.4, 541.6, 215.3, { s: 8 });
   C('gph', 542.2, 198.4, 566.4, 215.3, { s: 8 });
-  C('dtot', 452.8, 233.2, 477, 249.3, { s: 7.5 });
-  for (var r = 0; r <= NL; r++) {
-    var t = JCP[r] + 0.6, b = JCP[r + 1] - 0.6, m = (JCP[r] + JCP[r + 1]) / 2;
-    C('cp' + r, 79, t, 164, b, { s: 8.5, l: true });
-    C('vid' + r, 165, t, 196.5, m, { s: 7.5 });
-    C('vfq' + r, 165, m, 196.5, b, { s: 7 });
+  C(pk('dtot', p), 452.8, 233.2, 477, 249.3, { s: 7.5 });
+  for (var r = 0; r <= PER; r++) {
+    var t = JCP[r] + 0.6, b = JCP[r + 1] - 0.6, m = (JCP[r] + JCP[r + 1]) / 2, R = r + o;
+    C('cp' + R, 79, t, 164, b, { s: 8.5, l: true });
+    C('vid' + R, 165, t, 196.5, m, { s: 7.5 });
+    C('vfq' + R, 165, m, 196.5, b, { s: 7 });
   }
-  for (var q = 1; q <= NL; q++) {
-    var t0 = JLG[q - 1] + 0.7, t1 = JLG[q] - 0.7, tm = (JLG[q - 1] + JLG[q]) / 2;
+  for (var lq = 1; lq <= PER; lq++) {
+    var t0 = JLG[lq - 1] + 0.7, t1 = JLG[lq] - 0.7, tm = (JLG[lq - 1] + JLG[lq]) / 2, q = lq + o;
     C('route' + q, 200, t0, 228.5, t1, { s: 7.5 });
     C('alt' + q, 229, t0, 261.5, t1, { s: 7.5 });
     C('wd' + q, 262, t0, 279.2, tm - 0.3, { s: 7 });
@@ -349,9 +359,9 @@ function C(k, x0, y0, x1, y1, o) { o = o || {}; CELLS.push({ k: k, x0: x0, y0: y
     C('fuel' + q, 542.1, t0, 566.4, tm - 0.3, { s: 7.5 });
     C('frem' + q, 542.1, tm + 0.3, 566.4, t1, { s: 7.5 });
   }
-  C('tdist', 452.8, 518.9, 477, 535, { s: 8 });
-  C('tete', 500.4, 518.9, 520.8, 535, { s: 7.5 });
-  C('tfuel', 542.1, 518.9, 566.4, 535, { s: 8 });
+  C(pk('tdist', p), 452.8, 518.9, 477, 535, { s: 8 });
+  C(pk('tete', p), 500.4, 518.9, 520.8, 535, { s: 7.5 });
+  C(pk('tfuel', p), 542.1, 518.9, 566.4, 535, { s: 8 });
   // Airport & ATIS advisories
   var adv = [['atis', 215.8, 232.5], ['ceil', 233, 249.3], ['wind', 249.8, 266], ['alt', 266.6, 282.8], ['app', 283.4, 299.6], ['rwy', 300.2, 316.4]];
   adv.forEach(function (a) { C('d_' + a[0], 569.6, a[1], 608.9, a[2], { s: 7 }); C('a_' + a[0], 684.7, a[1], 728.5, a[2], { s: 7 }); });
@@ -365,7 +375,7 @@ function C(k, x0, y0, x1, y1, o) { o = o || {}; CELLS.push({ k: k, x0: x0, y0: y
   C('blockin', 609.4, 518.8, 648.7, 535, { s: 7.5 });
   C('blockout', 609.4, 535.6, 648.7, 551.8, { s: 7.5 });
   C('logtime', 649.3, 535.6, 728.5, 551.8, { s: 7.5 });
-})();
+}
 
 // ================= Cell roles: fill / optional / calculated =================
 var LEG_FILL = ['alt', 'wd', 'wv', 'tmp', 'tc', 'var', 'dist'];
@@ -396,7 +406,7 @@ function rowOf(k) { var m = k.match(/^(cp|vid|vfq|[a-z]+?)(\d+)$/); return m ? +
 
 // ================= State =================
 var KEY = 'jepp-navlog-osu-v1';
-var S = { v: {}, tail: 'N20SU', rpm: '', rpmModel: '', touched: false, fob: '', front: '340', rear: '0', bag1: '0', bag2: '0', tDep: '', tArr: '', sDep: '1', sArr: '1', resv: '30' };
+var S = { v: {}, tail: 'N20SU', rpm: '', rpmModel: '', touched: false, pages: 1, fob: '', front: '340', rear: '0', bag1: '0', bag2: '0', tDep: '', tArr: '', sDep: '1', sArr: '1', resv: '30' };
 try { var saved = JSON.parse(localStorage.getItem(KEY) || 'null'); if (saved) Object.keys(S).forEach(function (k) { if (saved[k] !== undefined) S[k] = saved[k]; }); } catch (e) {}
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
 
@@ -522,7 +532,7 @@ function compute() {
     if (eteU != null) { burn = burn * (eteU / ete); ete = eteU; } else out['ete' + q] = r0(ete);
     var fuelU = num(txt('fuel' + q)); if (fuelU != null) burn = fuelU; else out['fuel' + q] = f1(burn);
     cum += dist; cumFuel += burn; totalEte += ete; fuelRem = startFuel - cumFuel;
-    L.dist = dist; L.cum = cum; L.ete = ete;
+    L.dist = dist; L.cum = cum; L.ete = ete; L.fuel = burn;
     if (!txt('frem' + q)) out['frem' + q] = f1(fuelRem);
     if (fuelRem < 0) warn['frem' + q] = 1;
     // clock
@@ -542,7 +552,16 @@ function compute() {
   }
   // distance remaining
   legs.forEach(function (L) { if (L.cum != null && !txt('drem' + L.q)) out['drem' + L.q] = d1(cum - L.cum); });
-  if (cum) { out.dtot = d1(cum); out.tdist = d1(cum); out.tete = hm(totalEte); out.tfuel = f1(cumFuel); }
+  for (var pg = 0; pg < NL / PER; pg++) {
+    var pd = 0, pe = 0, pf = 0, before = 0, any = false;
+    legs.forEach(function (L) {
+      if (L.cum == null) return;
+      var lp = Math.floor((L.q - 1) / PER);
+      if (lp < pg) before = L.cum;
+      if (lp === pg) { pd += L.dist; pe += L.ete; pf += L.fuel; any = true; }
+    });
+    if (any || (pg === 0 && cum)) { out[pk('dtot', pg)] = d1(cum - before); out[pk('tdist', pg)] = d1(pd); out[pk('tete', pg)] = hm(pe); out[pk('tfuel', pg)] = f1(pf); }
+  }
   if (firstCruise) out.gph = f1(firstCruise.cr.gph);
 
   // airport names from checkpoints
@@ -632,8 +651,8 @@ function compute() {
 }
 
 // ================= UI =================
-var sheet = document.getElementById('sheet'), INPUTS = {};
-CELLS.forEach(function (c) {
+var INPUTS = {};
+function makeInput(c, host) {
   var el = document.createElement('input');
   el.type = 'text'; el.autocomplete = 'off'; el.spellcheck = false; el.dataset.k = c.k;
   el.style.left = ((c.x0 - CX0) / CW * 100) + '%'; el.style.top = ((c.y0 - CY0) / CHT * 100) + '%';
@@ -642,21 +661,53 @@ CELLS.forEach(function (c) {
   c.role = roleOf(c.k); c.row = rowOf(c.k);
   var base = c.k.replace(/\d+$/, ''); c.tip = TITLES[base] || TITLES[c.k] || (c.role === 'calc' ? 'Calculated' : '');
   if (/^note/.test(c.k)) c.tip = c.k === 'note0' ? 'Route — built from your checkpoints (type to replace)' : TITLES.note;
+  if (/^(tdist|tete|tfuel)/.test(c.k)) c.tip = 'Page total (calculated)';
   el.addEventListener('focus', function () { if (el.classList.contains('calc')) el.select(); });
   el.addEventListener('input', function () {
     var v = el.value; if (v.trim()) S.v[c.k] = v; else delete S.v[c.k];
-    save(); render(c.k);
+    save(); render(el);
   });
   el.addEventListener('blur', function () { render(); });
   el.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       var m = c.k.match(/^([a-z_]+?)(\d+)$/); if (!m) return;
-      var n = +m[2] + (e.key === 'ArrowUp' ? -1 : 1), nx = INPUTS[m[1] + n];
-      if (nx) { e.preventDefault(); nx.focus(); }
+      var n = +m[2] + (e.key === 'ArrowUp' ? -1 : 1), list = INPUTS[m[1] + n];
+      if (list) { var nx = list.filter(function (x) { return x._page === c.page; })[0] || list[list.length - 1]; e.preventDefault(); nx.focus(); }
     }
   });
-  sheet.appendChild(el); INPUTS[c.k] = el;
-});
+  el._page = c.page; c.el = el; host.appendChild(el);
+  (INPUTS[c.k] = INPUTS[c.k] || []).push(el);
+}
+function buildPages() {
+  var n = Math.max(1, Math.min(MAXP, +S.pages || 1)); S.pages = n; NL = n * PER;
+  CELLS = []; INPUTS = {};
+  for (var p = 0; p < n; p++) layoutPage(p);
+  var box = document.getElementById('pages'); box.innerHTML = '';
+  for (p = 0; p < n; p++) {
+    var wrap = document.createElement('div'); wrap.className = 'pagewrap';
+    var hd = document.createElement('div'); hd.className = 'pagehd';
+    hd.innerHTML = '<span>Page ' + (p + 1) + ' of ' + n + (n > 1 ? ' · legs ' + (p * PER + 1) + '–' + (p * PER + PER) : '') + '</span>';
+    if (p === n - 1 && n > 1) {
+      var rm = document.createElement('button'); rm.className = 'btn danger'; rm.textContent = 'Remove this page';
+      rm.addEventListener('click', function () {
+        var b = this;
+        if (!b.classList.contains('armed')) { b.classList.add('armed'); b.textContent = 'Tap again — clears legs on this page'; setTimeout(function () { b.classList.remove('armed'); b.textContent = 'Remove this page'; }, 3000); return; }
+        var lo = (S.pages - 1) * PER;
+        Object.keys(S.v).forEach(function (k) { var r = rowOf(k); if (r != null && (r > lo || /^(vid|vfq|cp)$/.test(k.replace(/\d+$/, '')) && r > lo)) delete S.v[k]; });
+        Object.keys(S.v).forEach(function (k) { if (new RegExp('_p' + (S.pages - 1) + '$').test(k)) delete S.v[k]; });
+        S.pages--; save(); buildPages(); render();
+      });
+      hd.appendChild(rm);
+    }
+    var sc = document.createElement('div'); sc.className = 'scroller';
+    var sh = document.createElement('div'); sh.className = 'sheet';
+    sc.appendChild(sh); wrap.appendChild(hd); wrap.appendChild(sc); box.appendChild(wrap);
+    CELLS.filter(function (c) { return c.page === p; }).forEach(function (c) { makeInput(c, sh); });
+  }
+  var add = document.getElementById('addPage');
+  add.disabled = n >= MAXP; add.textContent = n >= MAXP ? 'Maximum ' + MAXP + ' pages' : '+ Add page (legs ' + (n * PER + 1) + '–' + (n * PER + PER) + ')';
+  document.getElementById('pageNote').textContent = n > 1 ? 'Each new page starts at the last checkpoint of the page before it. Totals boxes are per page; trip totals are in the notes.' : 'Need more than 8 legs? Add a page — it continues the same flight.';
+}
 
 var $ = function (id) { return document.getElementById(id); };
 (function initPanel() {
@@ -687,7 +738,7 @@ function fillRpm() {
   S.rpm = String(best);
 }
 function focusFirst(keys) {
-  for (var i = 0; i < keys.length; i++) { var el = INPUTS[keys[i]]; if (el) { el.focus(); el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return; } }
+  for (var i = 0; i < keys.length; i++) { var el = (INPUTS[keys[i]] || [])[0]; if (el) { el.focus(); el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return; } }
 }
 function renderSteps(R) {
   var need = Object.keys(R.need), legKeys = need.filter(function (k) { return LEG_FILL.indexOf(k.replace(/\d+$/, '')) >= 0 && rowOf(k) <= Math.max(1, R.lastAct); });
@@ -711,14 +762,11 @@ function renderSteps(R) {
     b.addEventListener('click', s.go); box.appendChild(b);
   });
 }
-function render(skipKey) {
+function render(srcEl) {
   var R = compute();
   CELLS.forEach(function (c) {
-    var el = INPUTS[c.k], user = S.v[c.k] != null && String(S.v[c.k]).trim() !== '';
-    var focused = document.activeElement === el;
-    if (!focused || c.k !== skipKey) {
-      if (!focused) el.value = user ? S.v[c.k] : (R.out[c.k] || '');
-    }
+    var el = c.el, user = S.v[c.k] != null && String(S.v[c.k]).trim() !== '';
+    if (document.activeElement !== el) el.value = user ? S.v[c.k] : (R.out[c.k] || '');
     var shown = user || !!R.out[c.k];
     var inRegion = c.row == null || (/^(cp|vid|vfq)/.test(c.k) ? c.row <= R.region : c.row <= R.region);
     var needIt = !!R.need[c.k], optIt = c.role === 'opt' && inRegion && !shown;
@@ -749,6 +797,11 @@ function render(skipKey) {
   renderSteps(R);
   var w = $('warns'); w.classList.toggle('on', R.W.length > 0); w.innerHTML = R.W.map(function (x) { return '⚠ ' + x; }).join('<br>');
 }
+document.getElementById('addPage').addEventListener('click', function () {
+  if (S.pages >= MAXP) return; S.pages++; save(); buildPages(); render();
+  var w = document.querySelectorAll('.pagewrap'); w[w.length - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+buildPages();
 render();
 </script>
 </body>
